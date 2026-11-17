@@ -1,8 +1,8 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LinkedIn Profile Batch Extractor</title><style>
 :root{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#182535;background:#f3f6fa}*{box-sizing:border-box}body{margin:0;padding:36px 16px}.panel{max-width:930px;margin:0 auto;background:white;padding:30px;border:1px solid #dbe3ed;border-radius:18px;box-shadow:0 8px 32px #25364a0b}h1{margin:0 0 9px;font-size:26px}p{color:#566578;line-height:1.5}.drop{padding:38px 18px;text-align:center;background:#f6f9ff;border:2px dashed #95b2db;border-radius:13px;cursor:pointer;margin:24px 0 12px}.drop.over{background:#e5efff;border-color:#1366c3}.drop strong{display:block;font-size:18px;margin:4px}.minor{font-size:13px;color:#697b90}button{border:0;background:#0a66c2;color:white;padding:12px 19px;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer}button:disabled{background:#b5c2d2;cursor:not-allowed}button.secondary{background:#e8f0fb;color:#0a55a2}button.outline{background:#167447}button.outline:disabled{background:#b5c2d2}input[type=text],input[type=password],textarea{font:inherit;border:1px solid #cbd6e4;padding:10px;border-radius:7px;width:100%;min-width:0}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.form-row{display:flex;flex-direction:column;gap:5px}.form-row label{font-size:13px;font-weight:600;color:#364c63}.nocobox{border:1px solid #dae5ef;background:#f9fbfd;border-radius:12px;padding:18px;margin:20px 0}.nocobox h2{margin:0 0 8px;font-size:19px}.nocobox textarea{height:80px;resize:vertical;font:13px monospace}.subtle{font-size:12px;color:#617386}.error-box{color:#9c2828;white-space:pre-wrap}.actions{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}input[type=file]{display:none}.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:20px 0 8px}.status{padding:12px 14px;background:#f2f7ff;border-radius:9px;display:none;color:#21486a;margin:14px 0}.counts{font-weight:600;margin-top:16px}table{width:100%;border-collapse:collapse;font-size:14px;margin-top:12px}th{text-align:left;background:#f4f7fb;color:#5b6c7d}td,th{padding:10px 11px;border-bottom:1px solid #e8edf3;vertical-align:top}td:first-child{max-width:340px;overflow-wrap:anywhere}.ok{color:#137344}.warn{color:#aa6405}.bad{color:#b62a2a}.note{border-left:3px solid #90b4d8;padding-left:12px;font-size:13px;margin-top:20px}@media(max-width:640px){.panel{padding:16px}h1{font-size:22px}.form-grid{grid-template-columns:1fr}}
 
-.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}.tile{background:#f4f7fb;border-radius:10px;padding:12px}.tile strong{display:block;font-size:23px}.tile span{font-size:12px;color:#526476}.notice{padding:12px;background:#fff8e7;border-radius:9px;color:#68480f;margin:10px 0}.tag{font-size:12px;font-weight:600}.actions-row{display:flex;gap:8px;flex-wrap:wrap}@media(max-width:640px){.summary{grid-template-columns:repeat(2,1fr)}}
-</style></head><body><main class="panel"><h1>LinkedIn Profile Batch Extractor</h1><p>Select or drag in saved <b>MHTML</b> or <b>HTML</b> profile files.</p><div class="drop" id="drop" tabindex="0" role="button"><strong>Drop saved profile files here</strong><span>or click to choose multiple files</span><div class="minor">MHTML recommended · Multiple files supported</div></div><input id="filepicker" type="file" accept=".html,.htm,.mhtml,.mht" multiple><div class="toolbar"><button id="run" disabled>Extract profiles</button><button id="csv" class="secondary" disabled>Download combined CSV</button><button id="nocosend" class="outline" disabled>Update NocoDB</button><button id="report" class="secondary" disabled>Download update report</button><button id="clear" class="secondary">Clear</button></div><div id="status" class="status" aria-live="polite"></div><div id="count" class="counts"></div><div id="summary" class="summary" hidden></div><div id="notice" class="notice" hidden></div><div style="overflow-x:auto"><table><thead><tr><th>File</th><th>Name</th><th>Experience</th><th>Education</th><th>Status / Reason</th></tr></thead><tbody id="results"></tbody></table></div></main><script>
+.upload-progress{margin:16px 0;padding:14px;background:#f2f7ff;border:1px solid #d8e5f5;border-radius:10px}.upload-progress[hidden]{display:none}.upload-progress-track{height:15px;background:#d7e2ef;border-radius:999px;overflow:hidden;margin:10px 0}.upload-progress-fill{height:100%;width:0%;background:#167447;transition:width .2s ease}.upload-progress-label{font-weight:650;color:#21486a}.upload-progress-detail{color:#526476;font-size:13px;margin-top:5px}.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}.tile{background:#f4f7fb;border-radius:10px;padding:12px}.tile strong{display:block;font-size:23px}.tile span{font-size:12px;color:#526476}.notice{padding:12px;background:#fff8e7;border-radius:9px;color:#68480f;margin:10px 0}.tag{font-size:12px;font-weight:600}.actions-row{display:flex;gap:8px;flex-wrap:wrap}@media(max-width:640px){.summary{grid-template-columns:repeat(2,1fr)}}
+</style></head><body><main class="panel"><h1>LinkedIn Profile Batch Extractor</h1><p>Select or drag in saved <b>MHTML</b> or <b>HTML</b> profile files.</p><div class="drop" id="drop" tabindex="0" role="button"><strong>Drop saved profile files here</strong><span>or click to choose multiple files</span><div class="minor">MHTML recommended · Multiple files supported</div></div><input id="filepicker" type="file" accept=".html,.htm,.mhtml,.mht" multiple><div class="toolbar"><button id="run" disabled>Extract profiles</button><button id="csv" class="secondary" disabled>Download combined CSV</button><button id="nocosend" class="outline" disabled>Update NocoDB</button><button id="report" class="secondary" disabled>Download update report</button><button id="clear" class="secondary">Clear</button></div><div id="status" class="status" aria-live="polite"></div><div class="upload-progress" id="upload-progress" hidden><div class="upload-progress-label" id="upload-progress-label" aria-live="polite">0 profiles updated in NocoDB</div><div class="upload-progress-track" role="progressbar" aria-label="NocoDB update progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="upload-progress-track"><div class="upload-progress-fill" id="upload-progress-fill"></div></div><div class="upload-progress-detail" id="upload-progress-detail"></div></div><div id="count" class="counts"></div><div id="summary" class="summary" hidden></div><div id="notice" class="notice" hidden></div><div style="overflow-x:auto"><table><thead><tr><th>File</th><th>Name</th><th>Experience</th><th>Education</th><th>Status / Reason</th></tr></thead><tbody id="results"></tbody></table></div></main><script>
 
 'use strict';
 const $ = id => document.getElementById(id);
@@ -101,10 +101,10 @@ function csvRows(rows){return '\uFEFF'+rows.map(row=>row.map(escCSV).join(',')).
 function combinedCSV(){const keys=['sourceFile',...new Set(extracted.flatMap(x=>Object.keys(x.result)))];return csvRows([keys,...extracted.map(x=>keys.map(k=>k==='sourceFile'?x.file.name:x.result[k]||''))]);}
 function download(bytes,filename,mime){const blob=new Blob([bytes],{type:mime});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(link.href),2000);}
 function showStatus(msg){$('status').style.display='block';$('status').textContent=msg;}
-function updateSelection(files){selected=[...files].filter(f=>/\.(html?|mhtml?|mht)$/i.test(f.name));extracted=[];lastReport=[];$('run').disabled=!selected.length;$('csv').disabled=true;$('nocosend').disabled=true;$('report').disabled=true;$('results').replaceChildren();$('summary').hidden=true;$('notice').hidden=true;$('count').textContent=selected.length?`${selected.length} file(s) selected`:'';showStatus(selected.length?'Ready to extract.':'No supported files selected.');}
+function updateSelection(files){selected=[...files].filter(f=>/\.(html?|mhtml?|mht)$/i.test(f.name));extracted=[];lastReport=[];$('run').disabled=!selected.length;$('csv').disabled=true;$('nocosend').disabled=true;$('report').disabled=true;$('results').replaceChildren();$('summary').hidden=true;$('upload-progress').hidden=true;$('notice').hidden=true;$('count').textContent=selected.length?`${selected.length} file(s) selected`:'';showStatus(selected.length?'Ready to extract.':'No supported files selected.');}
 function addRow(file,name,exp,edu,state,cls){const tr=document.createElement('tr');for(const s of [file,name,exp,edu,state]){const td=document.createElement('td');td.textContent=s;tr.append(td);}tr.lastChild.className=cls;$('results').append(tr);return tr;}
 let lastReport=[];
-async function runBatch(){extracted=[];lastReport=[];$('results').replaceChildren();$('run').disabled=true;$('csv').disabled=true;$('nocosend').disabled=true;$('report').disabled=true;$('summary').hidden=true;let failures=0;
+async function runBatch(){extracted=[];lastReport=[];$('results').replaceChildren();$('run').disabled=true;$('csv').disabled=true;$('nocosend').disabled=true;$('report').disabled=true;$('summary').hidden=true;$('upload-progress').hidden=true;let failures=0;
  for(let i=0;i<selected.length;i++){const file=selected[i];showStatus(`Processing ${i+1} of ${selected.length}: ${file.name}`);
   try{const {html,profileUrl}=await readHTML(file);const doc=new DOMParser().parseFromString(html,'text/html');const parsed=getProfile(doc);if(!parsed.result.fullName||!doc.querySelector('main'))throw Error('Saved profile content not found');const key=canonicalProfile(profileUrl);const row=addRow(file.name,parsed.result.fullName,parsed.exp,parsed.edu,'Extracted','ok');extracted.push({file,...parsed,profileUrl:key?`https://www.linkedin.com/in/${key}/`:'',row});}
   catch(err){failures++;addRow(file.name,'—','—','—',String(err.message||err),'bad');}
@@ -113,16 +113,79 @@ async function runBatch(){extracted=[];lastReport=[];$('results').replaceChildre
  $('run').disabled=false;$('csv').disabled=!extracted.length;$('nocosend').disabled=!extracted.length;$('count').textContent=`${extracted.length} successful · ${failures} failed · ${selected.length} total`;showStatus(extracted.length?`Extraction complete. ${failures?'Review failed files below.':''}`:'No profiles extracted.');
 }
 function renderSummary(items){const s={updated:0,updated_review:0,review:0,unmatched:0,failed:0};items.forEach(i=>{if(i.status in s)s[i.status]++;});$('summary').hidden=false;$('summary').replaceChildren();for(const [name,label] of [['updated','Updated'],['updated_review','Updated · check'],['review','Needs review'],['unmatched','Unmatched'],['failed','Failed']]){const b=document.createElement('div');b.className='tile';const n=document.createElement('strong');n.textContent=s[name];const l=document.createElement('span');l.textContent=label;b.append(n,l);$('summary').append(b);} }
-async function upload(){if(!extracted.length)return;if(!confirm(`Update existing NocoDB rows for ${extracted.length} extracted profiles? No new rows will be created.`))return;
- $('nocosend').disabled=true;$('run').disabled=true;lastReport=[];const chunks=[];for(let i=0;i<extracted.length;i+=20)chunks.push(extracted.slice(i,i+20));
- let failed=false;for(let i=0;i<chunks.length;i++){showStatus(`Updating batch ${i+1} of ${chunks.length}…`);const chunk=chunks[i];try{
-  const response=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profiles:chunk.map(x=>({file:x.file.name,profileUrl:x.profileUrl,fullName:x.result.fullName,fields:x.result}))})});
-  const data=await response.json();if(!response.ok)throw Error(data.error||`HTTP ${response.status}`);
-  for(let j=0;j<chunk.length;j++){const r=data.results[j]||{status:'failed',reason:'No result returned'};lastReport.push({file:chunk[j].file.name,name:chunk[j].result.fullName,url:chunk[j].profileUrl,...r});const cell=chunk[j].row.lastChild;cell.textContent=(r.status==='updated'?'Updated':r.status==='updated_review'?'Updated · check':r.status==='review'?'Review':r.status==='unmatched'?'Unmatched':'Failed')+(r.reason?' — '+r.reason:'');cell.className=['updated','updated_review'].includes(r.status)?'ok':r.status==='failed'?'bad':'warn';}
- }catch(err){failed=true;for(const item of chunk){const r={file:item.file.name,name:item.result.fullName,url:item.profileUrl,status:'failed',reason:'Batch request failed or outcome unknown: '+err.message};lastReport.push(r);item.row.lastChild.textContent=r.reason;item.row.lastChild.className='bad';} }
- renderSummary(lastReport);$('report').disabled=false;
+function showUploadProgress(completed, updated, total, detail=''){
+  const percentage = total ? Math.round(completed / total * 100) : 0;
+  $('upload-progress').hidden = false;
+  $('upload-progress-label').textContent = `${updated} of ${total} profiles updated in NocoDB`;
+  $('upload-progress-detail').textContent = `${completed} of ${total} processed · ${Math.max(0,completed-updated)} not updated${detail ? ' · '+detail : ''}`;
+  $('upload-progress-fill').style.width = `${percentage}%`;
+  $('upload-progress-track').setAttribute('aria-valuenow', String(percentage));
+}
+function recordUpdate(item,r){
+  lastReport.push({file:item.file.name,name:item.result.fullName,url:item.profileUrl,...r});
+  const cell=item.row.lastChild;
+  cell.textContent=(r.status==='updated'?'Updated':r.status==='updated_review'?'Updated · check':r.status==='review'?'Review':r.status==='unmatched'?'Unmatched':'Failed')+(r.reason?' — '+r.reason:'');
+  cell.className=['updated','updated_review'].includes(r.status)?'ok':r.status==='failed'?'bad':'warn';
+}
+async function upload(){
+ if(!extracted.length)return;
+ if(!confirm(`Update existing NocoDB rows for ${extracted.length} extracted profiles? No new rows will be created.`))return;
+ $('nocosend').disabled=true;$('run').disabled=true;$('clear').disabled=true;
+ lastReport=[];
+ const chunks=[];for(let i=0;i<extracted.length;i+=20)chunks.push(extracted.slice(i,i+20));
+ let completed=0,updated=0,failed=false;
+ showUploadProgress(0,0,extracted.length,'Starting...');
+ for(let i=0;i<chunks.length;i++){
+  const chunk=chunks[i];
+  showStatus(`Updating batch ${i+1} of ${chunks.length}…`);
+  const received=new Set();
+  let done=false;
+  try{
+   const response=await fetch('/api/update-stream',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({profiles:chunk.map(x=>({file:x.file.name,profileUrl:x.profileUrl,fullName:x.result.fullName,fields:x.result}))})
+   });
+   if(!response.ok){let message=`HTTP ${response.status}`;try{const data=await response.json();message=data.error||message;}catch{}throw Error(message);}
+   if(!response.body)throw Error('This browser does not support streaming responses');
+   const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+   const parseLine=line=>{
+    if(!line.trim())return;
+    const event=JSON.parse(line);
+    if(event.type==='error')throw Error(event.error||'Backend error');
+    if(event.type==='done'){done=true;return;}
+    if(event.type!=='result')return;
+    const j=event.index;
+    if(!Number.isInteger(j)||j<0||j>=chunk.length||received.has(j))throw Error('Invalid or repeated progress event');
+    received.add(j);
+    const r=event.result||{status:'failed',reason:'No result returned'};
+    recordUpdate(chunk[j],r);
+    completed++;
+    if(['updated','updated_review'].includes(r.status))updated++;
+    showUploadProgress(completed,updated,extracted.length,chunk[j].result.fullName);
+    renderSummary(lastReport);
+   };
+   while(true){
+    const {value,done:streamEnded}=await reader.read();
+    if(streamEnded)break;
+    buffer+=decoder.decode(value,{stream:true});
+    let pos;while((pos=buffer.indexOf('\n'))!==-1){parseLine(buffer.slice(0,pos));buffer=buffer.slice(pos+1);}
+   }
+   buffer+=decoder.decode();if(buffer.trim())parseLine(buffer);
+   if(!done)throw Error('Connection closed before batch completion');
+  }catch(err){
+   failed=true;
+   for(let j=0;j<chunk.length;j++)if(!received.has(j)){
+    recordUpdate(chunk[j],{status:'failed',reason:'Outcome unknown; check NocoDB before retrying: '+err.message});
+    completed++;
+   }
+   showUploadProgress(completed,updated,extracted.length,'Some results require checking');
+   renderSummary(lastReport);
+  }
+  $('report').disabled=false;
  }
- $('nocosend').disabled=false;$('run').disabled=false;showStatus(`Finished. ${lastReport.length} profiles processed. ${failed?'Some requests failed; review the report before retrying.':'See the summary and download the update report.'}`);
+ $('nocosend').disabled=false;$('run').disabled=false;$('clear').disabled=false;
+ showUploadProgress(completed,updated,extracted.length,'Finished');
+ showStatus(`Finished: ${updated} NocoDB records updated out of ${extracted.length} profiles. ${failed?'Some requests failed; check the report before retrying.':'See the summary and download the report.'}`);
 }
 $('drop').addEventListener('click',()=>$('filepicker').click());$('drop').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('filepicker').click();}});$('filepicker').addEventListener('change',e=>updateSelection(e.target.files));
 for(const t of ['dragenter','dragover'])$('drop').addEventListener(t,e=>{e.preventDefault();$('drop').classList.add('over');});for(const t of ['dragleave','drop'])$('drop').addEventListener(t,e=>{e.preventDefault();$('drop').classList.remove('over');});$('drop').addEventListener('drop',e=>updateSelection(e.dataTransfer.files));
