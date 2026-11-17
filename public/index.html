@@ -1,0 +1,130 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LinkedIn Profile Batch Extractor</title><style>
+:root{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#182535;background:#f3f6fa}*{box-sizing:border-box}body{margin:0;padding:36px 16px}.panel{max-width:930px;margin:0 auto;background:white;padding:30px;border:1px solid #dbe3ed;border-radius:18px;box-shadow:0 8px 32px #25364a0b}h1{margin:0 0 9px;font-size:26px}p{color:#566578;line-height:1.5}.drop{padding:38px 18px;text-align:center;background:#f6f9ff;border:2px dashed #95b2db;border-radius:13px;cursor:pointer;margin:24px 0 12px}.drop.over{background:#e5efff;border-color:#1366c3}.drop strong{display:block;font-size:18px;margin:4px}.minor{font-size:13px;color:#697b90}button{border:0;background:#0a66c2;color:white;padding:12px 19px;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer}button:disabled{background:#b5c2d2;cursor:not-allowed}button.secondary{background:#e8f0fb;color:#0a55a2}button.outline{background:#167447}button.outline:disabled{background:#b5c2d2}input[type=text],input[type=password],textarea{font:inherit;border:1px solid #cbd6e4;padding:10px;border-radius:7px;width:100%;min-width:0}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.form-row{display:flex;flex-direction:column;gap:5px}.form-row label{font-size:13px;font-weight:600;color:#364c63}.nocobox{border:1px solid #dae5ef;background:#f9fbfd;border-radius:12px;padding:18px;margin:20px 0}.nocobox h2{margin:0 0 8px;font-size:19px}.nocobox textarea{height:80px;resize:vertical;font:13px monospace}.subtle{font-size:12px;color:#617386}.error-box{color:#9c2828;white-space:pre-wrap}.actions{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}input[type=file]{display:none}.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:20px 0 8px}.status{padding:12px 14px;background:#f2f7ff;border-radius:9px;display:none;color:#21486a;margin:14px 0}.counts{font-weight:600;margin-top:16px}table{width:100%;border-collapse:collapse;font-size:14px;margin-top:12px}th{text-align:left;background:#f4f7fb;color:#5b6c7d}td,th{padding:10px 11px;border-bottom:1px solid #e8edf3;vertical-align:top}td:first-child{max-width:340px;overflow-wrap:anywhere}.ok{color:#137344}.warn{color:#aa6405}.bad{color:#b62a2a}.note{border-left:3px solid #90b4d8;padding-left:12px;font-size:13px;margin-top:20px}@media(max-width:640px){.panel{padding:16px}h1{font-size:22px}.form-grid{grid-template-columns:1fr}}
+
+.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}.tile{background:#f4f7fb;border-radius:10px;padding:12px}.tile strong{display:block;font-size:23px}.tile span{font-size:12px;color:#526476}.notice{padding:12px;background:#fff8e7;border-radius:9px;color:#68480f;margin:10px 0}.tag{font-size:12px;font-weight:600}.actions-row{display:flex;gap:8px;flex-wrap:wrap}@media(max-width:640px){.summary{grid-template-columns:repeat(2,1fr)}}
+</style></head><body><main class="panel"><h1>LinkedIn Profile Batch Extractor</h1><p>Select or drag in saved <b>MHTML</b> or <b>HTML</b> profile files.</p><div class="drop" id="drop" tabindex="0" role="button"><strong>Drop saved profile files here</strong><span>or click to choose multiple files</span><div class="minor">MHTML recommended · Multiple files supported</div></div><input id="filepicker" type="file" accept=".html,.htm,.mhtml,.mht" multiple><div class="toolbar"><button id="run" disabled>Extract profiles</button><button id="csv" class="secondary" disabled>Download combined CSV</button><button id="nocosend" class="outline" disabled>Update NocoDB</button><button id="report" class="secondary" disabled>Download update report</button><button id="clear" class="secondary">Clear</button></div><div id="status" class="status" aria-live="polite"></div><div id="count" class="counts"></div><div id="summary" class="summary" hidden></div><div id="notice" class="notice" hidden></div><div style="overflow-x:auto"><table><thead><tr><th>File</th><th>Name</th><th>Experience</th><th>Education</th><th>Status / Reason</th></tr></thead><tbody id="results"></tbody></table></div></main><script>
+
+'use strict';
+const $ = id => document.getElementById(id);
+let selected = [], extracted = [];
+const dec = new TextDecoder('utf-8');
+const clean = v => String(v || '').replace(/\s+/g,' ').trim();
+const text = el => el ? clean(el.textContent) : '';
+const arr = xs => Array.from(xs || []);
+const DATE_RE = /((?:[A-Z][a-z]{2,8}\s+)?\d{4})\s*[-–]\s*(Present|(?:[A-Z][a-z]{2,8}\s+)?\d{4})/i;
+const ROLE_TYPES = ['Full-time','Part-time','Internship','Contract','Freelance','Self-employed','Temporary','Apprenticeship','Volunteer'];
+const LOCATION_TYPES = ['On-site','Remote','Hybrid'];
+function url(v) { try { const u=new URL(v); return /^https?:$/.test(u.protocol) ? u.origin+u.pathname : ''; }catch{return '';} }
+function dates(v){const m=String(v||'').match(DATE_RE);return m?[m[1],m[2]]:['',''];}
+function section(doc, label){return arr(doc.querySelectorAll('main h2')).find(x=>text(x).toLowerCase()===label.toLowerCase())?.closest('section')||null;}
+function items(sec){if(!sec)return [];const root=sec.querySelector('[data-component-type="LazyColumn"]')||sec;return arr(root.querySelectorAll('[componentkey^="entity-collection-item-"]')).filter(x=>!x.parentElement?.closest('[componentkey^="entity-collection-item-"]'));}
+function firstLink(root,regex){return arr(root?.querySelectorAll('a[href]')).find(a=>regex.test(a.getAttribute('href')||''))||null;}
+function getProfile(doc){
+  const top=doc.querySelector('[id$="Topcard"]')||doc.querySelector('main section');
+  let fullName=text(top?.querySelector('h2'));
+  if(!fullName) fullName=text(doc.querySelector('title')).replace(/^\(\d+\)\s*/,'').split(' | LinkedIn')[0];
+  const names=fullName.split(/\s+/).filter(Boolean), firstName=names[0]||'', lastName=names.slice(1).join(' ');
+  let locationText='';const contactAnchor=top?.querySelector('a[href*="/overlay/contact-info/"]');
+  if(contactAnchor?.parentElement?.parentElement){ const p=arr(contactAnchor.parentElement.parentElement.querySelectorAll('p')).map(text).filter(x=>x!=='·'&&!x.includes('Contact info'));locationText=p[0]||''; }
+  let city='',country='';if(locationText.includes(',')){const i=locationText.lastIndexOf(',');city=locationText.slice(0,i).trim();country=locationText.slice(i+1).trim();}else country=locationText;
+  let connectionDegree='';for(const p of arr(top?.querySelectorAll('p'))){const m=text(p).match(/^·?\s*(\d+(?:st|nd|rd|th))$/);if(m){connectionDegree=m[1];break;}}
+  const mutualConnections=text(arr(top?.querySelectorAll('a[href*="/search/results/people/"]')).find(a=>/mutual connection/i.test(text(a))));
+  let mutualConnectionsCount='';let m=mutualConnections.match(/and\s+(\d+)\s+other mutual connections/i);
+  if(m)mutualConnectionsCount=String(Number(m[1])+2);else{m=mutualConnections.match(/(\d+)\s+mutual connections/i);if(m)mutualConnectionsCount=m[1];}
+  const aboutNode=section(doc,'About')?.querySelector('[data-testid="expandable-text-box"]');
+  let about='';if(aboutNode){const clone=aboutNode.cloneNode(true);clone.querySelectorAll('button').forEach(b=>b.remove());about=text(clone);}
+  const experiences=[];
+  for(const item of items(section(doc,'Experience')).slice(0,5)){
+    const paras=arr(item.querySelectorAll('p')).map(text).filter(Boolean);if(paras.length<3)continue;
+    const orgParts=paras[1].split(/\s*[·•]\s*/).map(x=>x.trim());const dateIndex=paras.findIndex((p,i)=>i>=2&&DATE_RE.test(p));
+    const [start,end]=dates(dateIndex>=0?paras[dateIndex]:'');const remaining=(dateIndex>=0?paras.slice(dateIndex+1):paras.slice(2)).filter(p=>p!=='Present');
+    let location=remaining[0]||'';let locationType=LOCATION_TYPES.find(x=>x.toLowerCase()===location.toLowerCase())||'';if(locationType)location='';
+    experiences.push({title:paras[0],org:orgParts[0],orgUrl:url(firstLink(item,/linkedin\.com\/(?:company|school)\//)?.getAttribute('href')),
+      start,end,location,roleType:ROLE_TYPES.find(x=>orgParts.slice(1).includes(x))||'',locationType});
+  }
+  const education=[];
+  for(const item of items(section(doc,'Education')).slice(0,2)){
+    const paras=arr(item.querySelectorAll('p')).map(text).filter(Boolean);if(!paras.length)continue;
+    const [start,end]=dates(paras.slice(2).find(p=>DATE_RE.test(p))||'');
+    education.push({school:paras[0],degree:paras[1]||'',start,end,url:url(firstLink(item,/linkedin\.com\/(?:school|company)\//)?.getAttribute('href'))});
+  }
+    const current=experiences[0]?.end?.toLowerCase()==='present'?experiences[0]:null;
+  const result={fullName,firstName,lastName,connectionDegree,currentOrganization:current?.org||'',currentOrganizationUrl:current?.orgUrl||'',lastSchool:education[0]?.school||'',lastSchoolUrl:education[0]?.url||'',city,country,mutualConnections,mutualConnectionsCount,about};
+  experiences.forEach((e,i)=>{const n=i+1;Object.assign(result,{[`experience ${n} organization`]:e.org,[`experience ${n} organization url`]:e.orgUrl,[`experience ${n} job role`]:e.title,[`experience ${n} start date`]:e.start,[`experience ${n} end date`]:e.end,[`experience ${n} location`]:e.location,[`experience ${n} role type`]:e.roleType,[`experience ${n} location type`]:e.locationType});});
+  education.forEach((e,i)=>{const n=i+1;Object.assign(result,{[`school ${n}`]:e.school,[`school ${n} url`]:e.url,[`degree ${n}`]:e.degree,[`school ${n} start date`]:e.start,[`school ${n} end date`]:e.end});});
+  return {result,exp:experiences.length,edu:education.length};
+}
+function decodeQP(value){const bytes=[];for(let i=0;i<value.length;i++){if(value[i]==='='){if(value[i+1]==='\r'&&value[i+2]==='\n'){i+=2;continue;}if(value[i+1]==='\n'){i++;continue;}const hex=value.slice(i+1,i+3);if(/^[a-f0-9]{2}$/i.test(hex)){bytes.push(parseInt(hex,16));i+=2;continue;}}bytes.push(value.charCodeAt(i)&255);}return dec.decode(new Uint8Array(bytes));}
+function htmlFromMHTML(binary){
+  const normalized=binary.replace(/\r\n/g,'\n');
+  const boundary=normalized.match(/boundary\s*=\s*"?([^"\s;\n]+)/i)?.[1];if(!boundary)throw Error('MHTML multipart boundary not found');
+  const chunks=normalized.split('--'+boundary);let best=null;
+  for(const chunk of chunks){const pos=chunk.indexOf('\n\n');if(pos===-1)continue;const headers=chunk.slice(0,pos),body=chunk.slice(pos+2).replace(/\n$/,'');if(!/^Content-Type:\s*text\/html\b/im.test(headers))continue;
+    const encoding=headers.match(/^Content-Transfer-Encoding:\s*(\S+)/im)?.[1]?.toLowerCase()||'';
+    const source=headers.match(/^Content-Location:\s*(.+)$/im)?.[1]?.trim()||'';
+    let html='';if(encoding==='quoted-printable')html=decodeQP(body);else if(encoding==='base64'){
+      const raw=atob(body.replace(/\s/g,''));html=dec.decode(Uint8Array.from(raw,c=>c.charCodeAt(0)));
+    }else html=body;
+    if(!best||source.includes('linkedin.com/in/')){best=html;if(source.includes('linkedin.com/in/'))break;}
+  }
+  if(!best)throw Error('No HTML page found in MHTML');return best;
+}
+async function readHTML(file){
+ const buffer=await file.arrayBuffer();
+ if(/\.(mhtml|mht)$/i.test(file.name)){
+  const binary=new TextDecoder('iso-8859-1').decode(buffer);
+  const header=binary.slice(0,12000);
+  const snapshot=header.match(/^Snapshot-Content-Location:\s*(https?:\/\/[^\r\n]+)/im)?.[1]||'';
+  const html=htmlFromMHTML(binary);
+  return {html,profileUrl:snapshot || getSavedUrl(html)};
+ }
+ const html=dec.decode(buffer);
+ return {html,profileUrl:getSavedUrl(html)};
+}
+function getSavedUrl(html){
+ return html.match(/<!--\s*saved from url=\(\d+\)(https?:\/\/[^\s>]+)\s*-->/i)?.[1]||
+ html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)/i)?.[1]||
+ html.match(/https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[^"'\s<]+/i)?.[0]||'';
+}
+function canonicalProfile(value){
+ try {const u=new URL(String(value||'').trim().replace(/&amp;/g,'&'));
+ if(!/(^|\.)linkedin\.com$/i.test(u.hostname))return '';
+ const segments=u.pathname.split('/').filter(Boolean);
+ if(segments[0]?.toLowerCase()!=='in'||!segments[1])return '';
+ return decodeURIComponent(segments[1]).toLowerCase();
+ }catch{return '';}
+}
+
+
+function escCSV(v){return '"'+String(v??'').replace(/"/g,'""')+'"';}
+function csvRows(rows){return '\uFEFF'+rows.map(row=>row.map(escCSV).join(',')).join('\r\n');}
+function combinedCSV(){const keys=['sourceFile',...new Set(extracted.flatMap(x=>Object.keys(x.result)))];return csvRows([keys,...extracted.map(x=>keys.map(k=>k==='sourceFile'?x.file.name:x.result[k]||''))]);}
+function download(bytes,filename,mime){const blob=new Blob([bytes],{type:mime});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(link.href),2000);}
+function showStatus(msg){$('status').style.display='block';$('status').textContent=msg;}
+function updateSelection(files){selected=[...files].filter(f=>/\.(html?|mhtml?|mht)$/i.test(f.name));extracted=[];lastReport=[];$('run').disabled=!selected.length;$('csv').disabled=true;$('nocosend').disabled=true;$('report').disabled=true;$('results').replaceChildren();$('summary').hidden=true;$('notice').hidden=true;$('count').textContent=selected.length?`${selected.length} file(s) selected`:'';showStatus(selected.length?'Ready to extract.':'No supported files selected.');}
+function addRow(file,name,exp,edu,state,cls){const tr=document.createElement('tr');for(const s of [file,name,exp,edu,state]){const td=document.createElement('td');td.textContent=s;tr.append(td);}tr.lastChild.className=cls;$('results').append(tr);return tr;}
+let lastReport=[];
+async function runBatch(){extracted=[];lastReport=[];$('results').replaceChildren();$('run').disabled=true;$('csv').disabled=true;$('nocosend').disabled=true;$('report').disabled=true;$('summary').hidden=true;let failures=0;
+ for(let i=0;i<selected.length;i++){const file=selected[i];showStatus(`Processing ${i+1} of ${selected.length}: ${file.name}`);
+  try{const {html,profileUrl}=await readHTML(file);const doc=new DOMParser().parseFromString(html,'text/html');const parsed=getProfile(doc);if(!parsed.result.fullName||!doc.querySelector('main'))throw Error('Saved profile content not found');const key=canonicalProfile(profileUrl);const row=addRow(file.name,parsed.result.fullName,parsed.exp,parsed.edu,'Extracted','ok');extracted.push({file,...parsed,profileUrl:key?`https://www.linkedin.com/in/${key}/`:'',row});}
+  catch(err){failures++;addRow(file.name,'—','—','—',String(err.message||err),'bad');}
+  if(i%3===0)await new Promise(resolve=>setTimeout(resolve,0));
+ }
+ $('run').disabled=false;$('csv').disabled=!extracted.length;$('nocosend').disabled=!extracted.length;$('count').textContent=`${extracted.length} successful · ${failures} failed · ${selected.length} total`;showStatus(extracted.length?`Extraction complete. ${failures?'Review failed files below.':''}`:'No profiles extracted.');
+}
+function renderSummary(items){const s={updated:0,updated_review:0,review:0,unmatched:0,failed:0};items.forEach(i=>{if(i.status in s)s[i.status]++;});$('summary').hidden=false;$('summary').replaceChildren();for(const [name,label] of [['updated','Updated'],['updated_review','Updated · check'],['review','Needs review'],['unmatched','Unmatched'],['failed','Failed']]){const b=document.createElement('div');b.className='tile';const n=document.createElement('strong');n.textContent=s[name];const l=document.createElement('span');l.textContent=label;b.append(n,l);$('summary').append(b);} }
+async function upload(){if(!extracted.length)return;if(!confirm(`Update existing NocoDB rows for ${extracted.length} extracted profiles? No new rows will be created.`))return;
+ $('nocosend').disabled=true;$('run').disabled=true;lastReport=[];const chunks=[];for(let i=0;i<extracted.length;i+=20)chunks.push(extracted.slice(i,i+20));
+ let failed=false;for(let i=0;i<chunks.length;i++){showStatus(`Updating batch ${i+1} of ${chunks.length}…`);const chunk=chunks[i];try{
+  const response=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profiles:chunk.map(x=>({file:x.file.name,profileUrl:x.profileUrl,fullName:x.result.fullName,fields:x.result}))})});
+  const data=await response.json();if(!response.ok)throw Error(data.error||`HTTP ${response.status}`);
+  for(let j=0;j<chunk.length;j++){const r=data.results[j]||{status:'failed',reason:'No result returned'};lastReport.push({file:chunk[j].file.name,name:chunk[j].result.fullName,url:chunk[j].profileUrl,...r});const cell=chunk[j].row.lastChild;cell.textContent=(r.status==='updated'?'Updated':r.status==='updated_review'?'Updated · check':r.status==='review'?'Review':r.status==='unmatched'?'Unmatched':'Failed')+(r.reason?' — '+r.reason:'');cell.className=['updated','updated_review'].includes(r.status)?'ok':r.status==='failed'?'bad':'warn';}
+ }catch(err){failed=true;for(const item of chunk){const r={file:item.file.name,name:item.result.fullName,url:item.profileUrl,status:'failed',reason:'Batch request failed or outcome unknown: '+err.message};lastReport.push(r);item.row.lastChild.textContent=r.reason;item.row.lastChild.className='bad';} }
+ renderSummary(lastReport);$('report').disabled=false;
+ }
+ $('nocosend').disabled=false;$('run').disabled=false;showStatus(`Finished. ${lastReport.length} profiles processed. ${failed?'Some requests failed; review the report before retrying.':'See the summary and download the update report.'}`);
+}
+$('drop').addEventListener('click',()=>$('filepicker').click());$('drop').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('filepicker').click();}});$('filepicker').addEventListener('change',e=>updateSelection(e.target.files));
+for(const t of ['dragenter','dragover'])$('drop').addEventListener(t,e=>{e.preventDefault();$('drop').classList.add('over');});for(const t of ['dragleave','drop'])$('drop').addEventListener(t,e=>{e.preventDefault();$('drop').classList.remove('over');});$('drop').addEventListener('drop',e=>updateSelection(e.dataTransfer.files));
+$('run').addEventListener('click',runBatch);$('csv').addEventListener('click',()=>download(combinedCSV(),'linkedin_profiles_combined.csv','text/csv;charset=utf-8'));$('nocosend').addEventListener('click',upload);$('report').addEventListener('click',()=>download(csvRows([['File','Name','Profile URL','Status','Match method','NocoDB ID','Reason'],...lastReport.map(r=>[r.file,r.name,r.url,r.status,r.method||'',r.recordId||'',r.reason||''])]),'linkedin_nocodb_update_report.csv','text/csv;charset=utf-8'));$('clear').addEventListener('click',()=>{$('filepicker').value='';updateSelection([]);$('status').style.display='none';});
+</script></body></html>
