@@ -12,18 +12,19 @@ const NOCODB_URL = (
   'https://cricexec-nocodb-prod.onrender.com'
 ).replace(/\/+$/, '');
 
-const TABLE_ID = process.env.NOCODB_TABLE_ID || 'mlb0mtz902gqwg9';
+const TABLE_ID =
+  process.env.NOCODB_TABLE_ID || 'mlb0mtz902gqwg9';
+
 const TOKEN = process.env.NOCODB_API_TOKEN || '';
 const STATIC_FILE = path.join(__dirname, 'public/index.html');
 
 const READ_ONLY = new Set(['ProfileURL', 'FullName']);
-const MAX_ROWS = 25000;
+const MAX_MATCH_ROWS = 500;
 const PAGE_SIZE = 100;
 const MAX_BATCH = 20;
 const MAX_BODY = 1024 * 1024;
 
 const recent = new Map();
-const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function normalizeProfile(v) {
   try {
@@ -31,7 +32,9 @@ function normalizeProfile(v) {
       String(v || '').trim().replace(/&amp;/g, '&')
     );
 
-    if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) return '';
+    if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) {
+      return '';
+    }
 
     const pieces = url.pathname.split('/').filter(Boolean);
 
@@ -110,8 +113,8 @@ async function nocoRequest(urlPath, method = 'GET', body) {
   }
 }
 
-// Detect the primary key from NocoDB metadata.
-// The individuals table uses uppercase "ID".
+// Detect the primary key using NocoDB metadata.
+// The PostgreSQL individuals table uses uppercase ID.
 function getPrimaryKeyColumn(cols) {
   const keys = cols.filter(
     c => c.pk === true || c.pk === 1 || c.pk === '1'
@@ -198,15 +201,23 @@ async function getMetadata() {
   return { permitted, primaryKey };
 }
 
-async function listRows() {
-  const all = [];
+// Search only the relevant NocoDB records.
+// We verify exact matches after fetching the results.
+async function findRows(column, searchTerm, primaryKey) {
+  if (!['ProfileURL', 'FullName'].includes(column)) {
+    throw Error('Unsupported lookup field');
+  }
 
-  for (
-    let offset = 0;
-    offset < MAX_ROWS;
-    offset += PAGE_SIZE
-  ) {
+  const found = [];
+
+  for (let offset = 0; offset <= MAX_MATCH_ROWS;) {
     const params = new URLSearchParams({
+      where: `(${column},like,${searchTerm})`,
+      fields: [
+        primaryKey,
+        'ProfileURL',
+        'FullName'
+      ].join(','),
       limit: String(PAGE_SIZE),
       offset: String(offset)
     });
@@ -217,24 +228,192 @@ async function listRows() {
 
     if (!Array.isArray(data.list)) {
       throw Error(
-        'NocoDB records response did not contain a list. ' +
-        'No updates attempted.'
+        'NocoDB lookup returned an unexpected response; ' +
+        'no update attempted.'
       );
     }
 
-    all.push(...data.list);
+    found.push(...data.list);
 
-    if (data.list.length < PAGE_SIZE) {
-      return all;
+    if (found.length > MAX_MATCH_ROWS) {
+      throw Error(
+        `More than ${MAX_MATCH_ROWS} lookup results; ` +
+        'refusing to choose a row.'
+      );
+    }
+
+    if (
+      data.pageInfo?.isLastPage === true ||
+      data.list.length === 0
+    ) {
+      return found;
+    }
+
+    // NocoDB may cap the requested page size.
+    offset += data.list.length;
+
+    if (
+      Number.isFinite(Number(data.pageInfo?.totalRows)) &&
+      offset >= Number(data.pageInfo.totalRows)
+    ) {
+      return found;
+    }
+
+    if (
+      data.list.length < PAGE_SIZE &&
+      !data.pageInfo
+    ) {
+      return found;
     }
   }
 
   throw Error(
-    `Safety limit of ${MAX_ROWS} records reached; ` +
-    'refusing updates until pagination strategy is configured.'
+    'Lookup exceeded the safety limit; no update attempted.'
   );
 }
 
+// Extract a safe LinkedIn profile identifier for URL searching.
+function searchableUrlSlug(profileUrl) {
+  const slug = normalizeProfile(profileUrl);
+
+  return /^[a-z0-9][a-z0-9-]{2,}$/i.test(slug)
+    ? slug
+    : '';
+}
+
+// Prepare a safe search term for name fallback.
+function searchableName(fullName) {
+  const name = String(fullName || '')
+    .normalize('NFKC')
+    .trim();
+
+  if (
+    name &&
+    /^[\p{L}\p{N} .'-]+$/u.test(name) &&
+    name.length <= 150
+  ) {
+    return name;
+  }
+
+  // For names containing special characters, search by a
+  // safe word, then verify the complete name in JavaScript.
+  const words =
+    name.match(/[\p{L}\p{N}-]{3,}/gu) || [];
+
+  return words.sort(
+    (a, b) => b.length - a.length
+  )[0] || '';
+}
+
+// Match a profile through targeted NocoDB lookups.
+async function findProfileMatch(profile, primaryKey) {
+  const slug = searchableUrlSlug(profile.profileUrl);
+
+  let urlRows = [];
+
+  if (slug) {
+    urlRows = await findRows(
+      'ProfileURL',
+      slug,
+      primaryKey
+    );
+  }
+
+  // A contains search may return similar URLs.
+  // Only an exact normalized identifier is accepted.
+  const exactUrlRows = urlRows.filter(
+    row => normalizeProfile(row.ProfileURL) === slug
+  );
+
+  if (exactUrlRows.length > 1) {
+    return fail(
+      `${exactUrlRows.length} rows share the profile URL`,
+      'review'
+    );
+  }
+
+  if (exactUrlRows.length === 1) {
+    const row = exactUrlRows[0];
+
+    if (
+      normalizeName(row.FullName) !==
+      normalizeName(profile.fullName)
+    ) {
+      return fail(
+        `URL matched but FullName differs in NocoDB: ${row.FullName}`,
+        'review'
+      );
+    }
+
+    return {
+      row,
+      method: 'ProfileURL',
+      review: false
+    };
+  }
+
+  // Fallback: search by FullName.
+  const nameTerm = searchableName(profile.fullName);
+
+  if (!nameTerm) {
+    return fail(
+      'No safe name or LinkedIn URL available for matching',
+      'review'
+    );
+  }
+
+  const nameRows = await findRows(
+    'FullName',
+    nameTerm,
+    primaryKey
+  );
+
+  const exactNameRows = nameRows.filter(
+    row =>
+      normalizeName(row.FullName) ===
+      normalizeName(profile.fullName)
+  );
+
+  if (exactNameRows.length > 1) {
+    return fail(
+      `${exactNameRows.length} rows share FullName; ` +
+      'manual review required',
+      'review'
+    );
+  }
+
+  if (exactNameRows.length === 0) {
+    return fail(
+      'No ProfileURL or FullName match in the NocoDB table',
+      'unmatched'
+    );
+  }
+
+  const row = exactNameRows[0];
+
+  const savedSlug = normalizeProfile(row.ProfileURL);
+  const uploadedSlug = normalizeProfile(profile.profileUrl);
+
+  if (
+    savedSlug &&
+    uploadedSlug &&
+    savedSlug !== uploadedSlug
+  ) {
+    return fail(
+      'Name matched, but ProfileURL differs; ' +
+      'manual review required',
+      'review'
+    );
+  }
+
+  return {
+    row,
+    method: 'FullName',
+    review: true
+  };
+}
+
+// Retained for compatibility with existing tests.
 function indexRows(rows) {
   const byUrl = new Map();
   const byName = new Map();
@@ -261,8 +440,13 @@ function matchProfile(profile, index, primaryKey = 'Id') {
   const url = normalizeProfile(profile.profileUrl);
   const name = normalizeName(profile.fullName);
 
-  const urls = url ? index.byUrl.get(url) || [] : [];
-  const names = name ? index.byName.get(name) || [] : [];
+  const urls = url
+    ? index.byUrl.get(url) || []
+    : [];
+
+  const names = name
+    ? index.byName.get(name) || []
+    : [];
 
   if (urls.length > 1) {
     return fail(
@@ -284,7 +468,7 @@ function matchProfile(profile, index, primaryKey = 'Id') {
     if (
       names.length === 1 &&
       String(names[0][primaryKey]) !==
-        String(row[primaryKey])
+      String(row[primaryKey])
     ) {
       return fail(
         'URL and name identify different rows',
@@ -309,10 +493,13 @@ function matchProfile(profile, index, primaryKey = 'Id') {
 
   if (names.length === 1) {
     const row = names[0];
-
     const stored = normalizeProfile(row.ProfileURL);
 
-    if (stored && url && stored !== url) {
+    if (
+      stored &&
+      url &&
+      stored !== url
+    ) {
       return fail(
         'Name matched, but ProfileURL differs; ' +
         'manual review required',
@@ -333,10 +520,14 @@ function matchProfile(profile, index, primaryKey = 'Id') {
   );
 }
 
+// Include only mapped, nonempty, writable fields.
 function buildChanges(fields, permitted) {
   const payload = {};
 
-  for (const [source, target] of Object.entries(mapping)) {
+  for (
+    const [source, target]
+    of Object.entries(mapping)
+  ) {
     if (
       READ_ONLY.has(target) ||
       !permitted.has(target)
@@ -346,7 +537,10 @@ function buildChanges(fields, permitted) {
 
     const value = fields[source];
 
-    if (typeof value === 'string' && value.trim()) {
+    if (
+      typeof value === 'string' &&
+      value.trim()
+    ) {
       payload[target] = value.trim();
     } else if (
       typeof value === 'number' &&
@@ -359,17 +553,18 @@ function buildChanges(fields, permitted) {
   return payload;
 }
 
+// Update existing records only.
 async function updateProfiles(profiles) {
-  const { permitted, primaryKey } = await getMetadata();
-
-  const rows = await listRows();
-  const index = indexRows(rows);
+  const { permitted, primaryKey } =
+    await getMetadata();
 
   const results = [];
   const selectedIds = new Set();
 
   for (const profile of profiles) {
-    const name = String(profile.fullName || '').trim();
+    const name = String(
+      profile.fullName || ''
+    ).trim();
 
     if (
       !name ||
@@ -383,11 +578,19 @@ async function updateProfiles(profiles) {
       continue;
     }
 
-    const match = matchProfile(
-      profile,
-      index,
-      primaryKey
-    );
+    let match;
+
+    try {
+      match = await findProfileMatch(
+        profile,
+        primaryKey
+      );
+    } catch (error) {
+      results.push(
+        fail(`Lookup failed: ${error.message}`)
+      );
+      continue;
+    }
 
     if (!match.row) {
       results.push(match);
@@ -396,7 +599,10 @@ async function updateProfiles(profiles) {
 
     const id = match.row[primaryKey];
 
-    if (id === undefined || id === null) {
+    if (
+      id === undefined ||
+      id === null
+    ) {
       results.push(
         fail(
           `Matched row has no ${primaryKey}; ` +
@@ -436,8 +642,8 @@ async function updateProfiles(profiles) {
       continue;
     }
 
-    // PATCH updates only the fields submitted.
-    // ProfileURL and FullName are never included.
+    // Only mapped fields are updated.
+    // ProfileURL and FullName are not included.
     try {
       await nocoRequest(
         `/api/v2/tables/${encodeURIComponent(TABLE_ID)}/records`,
@@ -485,11 +691,15 @@ function rateLimit(req) {
 
   let slot = recent.get(ip);
 
-  if (!slot || now - slot.s > 60000) {
+  if (
+    !slot ||
+    now - slot.s > 60000
+  ) {
     slot = { s: now, c: 0 };
   }
 
   slot.c++;
+
   recent.set(ip, slot);
 
   if (recent.size > 500) {
@@ -509,7 +719,10 @@ async function readJSON(req) {
   for await (const part of req) {
     text += part.toString('utf8');
 
-    if (Buffer.byteLength(text) > MAX_BODY) {
+    if (
+      Buffer.byteLength(text) >
+      MAX_BODY
+    ) {
       throw Error('Request too large');
     }
   }
@@ -517,108 +730,125 @@ async function readJSON(req) {
   return JSON.parse(text);
 }
 
-const server = http.createServer(async (req, res) => {
-  if (
-    req.method === 'GET' &&
-    (req.url === '/' || req.url === '/index.html')
-  ) {
-    res.writeHead(200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy':
-        "default-src 'self'; " +
-        "script-src 'self' 'unsafe-inline'; " +
-        "style-src 'self' 'unsafe-inline'; " +
-        "connect-src 'self'; " +
-        "object-src 'none'; " +
-        "base-uri 'none'; " +
-        "frame-ancestors 'none'"
-    });
+const server = http.createServer(
+  async (req, res) => {
+    if (
+      req.method === 'GET' &&
+      (
+        req.url === '/' ||
+        req.url === '/index.html'
+      )
+    ) {
+      res.writeHead(200, {
+        'Content-Type':
+          'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy':
+          "default-src 'self'; " +
+          "script-src 'self' 'unsafe-inline'; " +
+          "style-src 'self' 'unsafe-inline'; " +
+          "connect-src 'self'; " +
+          "object-src 'none'; " +
+          "base-uri 'none'; " +
+          "frame-ancestors 'none'"
+      });
 
-    res.end(fs.readFileSync(STATIC_FILE));
-    return;
-  }
+      res.end(
+        fs.readFileSync(STATIC_FILE)
+      );
 
-  if (
-    req.url === '/health' &&
-    req.method === 'GET'
-  ) {
-    send(res, 200, { ok: true });
-    return;
-  }
+      return;
+    }
 
-  if (
-    req.url === '/api/update' &&
-    req.method === 'POST'
-  ) {
-    // Reject cross-origin browser requests.
-    // This is not user authentication.
-    const origin = req.headers.origin;
-    const host = req.headers.host;
+    if (
+      req.url === '/health' &&
+      req.method === 'GET'
+    ) {
+      send(res, 200, { ok: true });
+      return;
+    }
 
-    if (origin) {
-      try {
-        if (new URL(origin).host !== host) {
+    if (
+      req.url === '/api/update' &&
+      req.method === 'POST'
+    ) {
+      const origin = req.headers.origin;
+      const host = req.headers.host;
+
+      if (origin) {
+        try {
+          if (
+            new URL(origin).host !== host
+          ) {
+            send(res, 403, {
+              error:
+                'Cross-origin requests are not accepted'
+            });
+            return;
+          }
+        } catch {
           send(res, 403, {
-            error: 'Cross-origin requests are not accepted'
+            error: 'Bad origin'
           });
           return;
         }
-      } catch {
-        send(res, 403, {
-          error: 'Bad origin'
-        });
-        return;
       }
-    }
 
-    if (!rateLimit(req)) {
-      send(res, 429, {
-        error: 'Too many upload requests. Try again later.'
-      });
-      return;
-    }
-
-    if (!TOKEN) {
-      send(res, 503, {
-        error: 'NOCODB_API_TOKEN is not configured on Render.'
-      });
-      return;
-    }
-
-    try {
-      const body = await readJSON(req);
-
-      if (
-        !Array.isArray(body.profiles) ||
-        body.profiles.length < 1 ||
-        body.profiles.length > MAX_BATCH
-      ) {
-        send(res, 400, {
-          error: `Upload 1–${MAX_BATCH} profiles per request.`
+      if (!rateLimit(req)) {
+        send(res, 429, {
+          error:
+            'Too many upload requests. Try again later.'
         });
         return;
       }
 
-      const results = await updateProfiles(
-        body.profiles
-      );
+      if (!TOKEN) {
+        send(res, 503, {
+          error:
+            'NOCODB_API_TOKEN is not configured on Render.'
+        });
+        return;
+      }
 
-      send(res, 200, { results });
-    } catch (error) {
-      console.error('Upload error:', error.message);
+      try {
+        const body = await readJSON(req);
 
-      send(res, 502, {
-        error: error.message
-      });
+        if (
+          !Array.isArray(body.profiles) ||
+          body.profiles.length < 1 ||
+          body.profiles.length > MAX_BATCH
+        ) {
+          send(res, 400, {
+            error:
+              `Upload 1–${MAX_BATCH} profiles per request.`
+          });
+          return;
+        }
+
+        const results =
+          await updateProfiles(body.profiles);
+
+        send(res, 200, { results });
+      } catch (error) {
+        console.error(
+          'Upload error:',
+          error.message
+        );
+
+        send(res, 502, {
+          error: error.message
+        });
+      }
+
+      return;
     }
 
-    return;
+    send(res, 404, {
+      error: 'Not found'
+    });
   }
-
-  send(res, 404, { error: 'Not found' });
-});
+);
 
 if (require.main === module) {
   server.listen(
@@ -637,6 +867,10 @@ module.exports = {
   indexRows,
   buildChanges,
   getPrimaryKeyColumn,
+  findRows,
+  findProfileMatch,
+  searchableUrlSlug,
+  searchableName,
   updateProfiles,
   server
 };
